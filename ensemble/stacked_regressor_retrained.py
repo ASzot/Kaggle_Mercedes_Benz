@@ -1,4 +1,5 @@
 from sklearn.base import BaseEstimator, TransformerMixin, RegressorMixin, clone
+from sklearn.model_selection import KFold
 
 class StackedRegressorRetrained(BaseEstimator, RegressorMixin, TransformerMixin):
     def __init__(self, regressors, meta_regressor, n_folds=5, use_features_in_secondary=False):

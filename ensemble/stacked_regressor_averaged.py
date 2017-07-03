@@ -1,4 +1,5 @@
 from sklearn.base import BaseEstimator, TransformerMixin, RegressorMixin, clone
+from sklearn.model_selection import KFold
 
 class StackedRegressorAveraged(BaseEstimator, RegressorMixin, TransformerMixin):
     def __init__(self, regressors, meta_regressor, n_folds=5):

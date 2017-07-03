@@ -1,90 +1,109 @@
-import numpy as np
 import pandas as pd
-from sklearn.preprocessing import LabelEncoder
-from sklearn.model_selection import train_test_split
-
-train = pd.read_csv('data/train.csv')
-test = pd.read_csv('data/test.csv')
-
-for c in train.columns:
-    if train[c].dtype == 'object':
-        lbl = LabelEncoder()
-        lbl.fit(list(train[c].values) + list(test[c].values))
-        train[c] = lbl.transform(list(train[c].values))
-        test[c] = lbl.transform(list(test[c].values))
-
-from sklearn.decomposition import PCA, FastICA
-
-usable_columns = list(set(train.columns) - set(['ID', 'y']))
-
-y_train = train['y']
-id_test = test['ID'].astype(np.int32)
-
-train = train[usable_columns]
-test = test[usable_columns]
-
-for column in usable_columns:
-    cardinality = len(np.unique(train[column]))
-    if cardinality == 1:
-        train.drop(column, axis=1)
-        test.drop(column, axis=1)
-
-n_comp = 200
-
-pca = PCA(n_components=n_comp)
-pca2_results_train = pca.fit_transform(train)
-pca2_results_test = pca.fit_transform(test)
-
-#print('Before ' + str(train.shape))
-#print('After ' + str(pca2_results_train.shape))
-
-#train = pca2_results_train
-#test = pca2_results_test
-
-#ica = FastICA(n_components=n_comp)
-#ica2_results_train = ica.fit_transform(train)
-#ica2_results_test = ica.fit_transform(test)
-#
-#for i in range(1, n_comp+1):
-#    train['pca_' + str(i)] = pca2_results_train[:, i-1]
-#    test['pca_' + str(i)] = pca2_results_test[:, i-1]
-#
-#    train['ica_' + str(i)] = ica2_results_train[:, i-1]
-#    test['ica_' + str(i)] = ica2_results_test[:, i-1]
-
-y_mean = np.mean(y_train)
-
+import numpy as np
+from sklearn.ensemble import RandomForestRegressor, ExtraTreesRegressor
+from sklearn.linear_model import ElasticNet, Lasso
+from sklearn.feature_selection import SelectFromModel
+from sklearn.svm import SVR
+from sklearn.model_selection import cross_val_score
+from sklearn.pipeline import make_pipeline
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import RobustScaler
 import xgboost as xgb
-
+from ensemble.regressor_averaged import RegressorAveraged
+from ensemble.stacked_regressor_averaged import StackedRegressorAveraged
+from ensemble.stacked_regressor_retrained import StackedRegressorRetrained
+from model.nn import BasicNeuralNetwork
+from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score
 
-x_train, x_valid, y_train, y_valid = train_test_split(train, y_train,
-        test_size=0.2)
+BASE_DIR = 'data/'
 
-d_train = xgb.DMatrix(x_train, label=y_train)
-d_valid = xgb.DMatrix(x_valid, label=y_valid)
+def test_model(model, x_train, y_train, x_test, id_test):
+    x_train, x_val, y_train, y_val = train_test_split(x_train, y_train,
+            test_size=0.2)
 
-d_test = xgb.DMatrix(test)
+    model = model.fit(x_train, y_train)
 
-params = {}
-params['objective'] = 'reg:linear'
-params['eta'] = 0.02
-params['max_depth'] = 4
+    pred_y_val = model.predict(x_val)
 
-def xgb_r2_score(preds, dtrain):
-    labels = dtrain.get_label()
-    return 'r2', r2_score(labels, preds)
+    print('Validation score: %.7f' % r2_score(pred_y_val, y_val))
 
-watchlist = [(d_train, 'train'), (d_valid, 'valid')]
+    y_pred = model.predict(x_test)
 
-clf = xgb.train(params, d_train, 1000, watchlist, early_stopping_rounds=50,
-        feval=xgb_r2_score, maximize=True, verbose_eval=10)
+    output = pd.DataFrame({'id': id_test, 'y': y_pred})
+    output.to_csv('data/preds/preds0.csv', index=False)
+    print('Saved outputs to file')
 
-print('Dimensionality is now ' + str(train.shape))
 
-print(r2_score(d_valid.get_label(), clf.predict(d_valid)))
+#########################
+# Preprocess data
+#########################
 
-y_pred = clf.predict(d_test)
-output = pd.DataFrame({'id': id_test, 'y': y_pred})
-output.to_csv('data/xgboost-depth{}-pca-ica.csv'.format(params['max_depth']),
-        index=False)
+train = pd.read_csv(BASE_DIR + 'train.csv')
+test = pd.read_csv(BASE_DIR + 'test.csv')
+
+# Remove the outlier
+train = train[train.y < 250]
+
+y_train = train['y'].values
+y_mean = np.mean(y_train)
+
+id_test = test['ID']
+
+prev_len = len(train.columns)
+
+for k in train.keys():
+    if len(train[k].unique()) == 1:
+        train.pop(k)
+        test.pop(k)
+
+print('%i columns were dropped' % (prev_len - len(train.columns)))
+
+num_train = len(train)
+df_all = pd.concat([train, test])
+df_all.drop(['ID', 'y'], axis=1, inplace=True)
+
+df_all = pd.get_dummies(df_all, drop_first=True)
+
+train = df_all[:num_train]
+test = df_all[num_train:]
+
+
+#########################
+# Create models
+#########################
+
+en = make_pipeline(RobustScaler(), SelectFromModel(Lasso(alpha=0.03)),
+        ElasticNet(alpha=0.001, l1_ratio=0.1))
+
+rf = RandomForestRegressor(n_estimators=250, n_jobs=4, min_samples_split=25,
+        min_samples_leaf=25, max_depth=3)
+
+et = ExtraTreesRegressor(n_estimators=100, n_jobs=4, min_samples_split=25,
+        min_samples_leaf=35, max_features=150)
+
+xgbm = xgb.sklearn.XGBRegressor(max_depth=4, learning_rate=0.005, subsample=0.9,
+        base_score=y_mean, objective='reg:linear', n_estimators=1000)
+
+stack_avg = StackedRegressorAveraged((en, rf, et),
+        ElasticNet(l1_ratio=0.1, alpha=1.4))
+
+stack_with_feats = StackedRegressorRetrained((en, rf, et), xgbm,
+        use_features_in_secondary=True)
+
+stack_retrain = StackedRegressorRetrained((en, rf, et),
+        ElasticNet(l1_ratio=0.1, alpha=1.4))
+
+averaged = RegressorAveraged((en, rf, et, xgbm))
+
+#########################
+# Evaluate Models
+#########################
+
+#results = cross_val_score(averaged, train.values, y_train, cv=5, scoring='r2')
+#print("Stacking (retrained) score: %.4f (%.4f)" % (results.mean(), results.std()))
+
+test_model(stack_retrain, train.values, y_train, test, id_test)
+
+#results = cross_val_score(stack_avg, train.values, y_train, cv=5, scoring='r2')
+#print("Stacking (averaged) score: %.4f (%.4f)" % (results.mean(), results.std()))

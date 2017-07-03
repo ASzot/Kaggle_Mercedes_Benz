@@ -4,6 +4,7 @@ class RegressorAveraged(BaseEstimator, RegressorMixin, TransformerMixin):
     def __init__(self, regressors):
         self.regressors = regressors
 
+
     def fit(self, X, y):
         self.regr_ = [clone(x) for x in self.regressors]
 
