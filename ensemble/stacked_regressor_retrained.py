@@ -1,5 +1,6 @@
 from sklearn.base import BaseEstimator, TransformerMixin, RegressorMixin, clone
 from sklearn.model_selection import KFold
+import numpy as np
 
 class StackedRegressorRetrained(BaseEstimator, RegressorMixin, TransformerMixin):
     def __init__(self, regressors, meta_regressor, n_folds=5, use_features_in_secondary=False):
@@ -8,8 +9,18 @@ class StackedRegressorRetrained(BaseEstimator, RegressorMixin, TransformerMixin)
         self.n_folds = n_folds
         self.use_features_in_secondary = use_features_in_secondary
 
+    def __clone_regressors(self):
+        for regressor in self.regressors:
+            try:
+                ret_obj = clone(regressor)
+            except:
+                ret_obj = regressor
+
+            yield ret_obj
+
+
     def fit(self, X, y):
-        self.regr_ = [clone(x) for x in self.regressors]
+        self.regr_ = list(self.__clone_regressors())
         self.meta_regr_ = clone(self.meta_regressor)
 
         kfold = KFold(n_splits=self.n_folds, shuffle=True)

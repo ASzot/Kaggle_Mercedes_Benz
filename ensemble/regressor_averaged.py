@@ -1,12 +1,22 @@
 from sklearn.base import BaseEstimator, TransformerMixin, RegressorMixin, clone
+import numpy as np
 
 class RegressorAveraged(BaseEstimator, RegressorMixin, TransformerMixin):
     def __init__(self, regressors):
         self.regressors = regressors
 
+    def __clone_regressors(self):
+        for regressor in self.regressors:
+            try:
+                ret_obj = clone(regressor)
+            except:
+                ret_obj = regressor
+
+            yield ret_obj
+
 
     def fit(self, X, y):
-        self.regr_ = [clone(x) for x in self.regressors]
+        self.regr_ = list(self.__clone_regressors())
 
         # Train base models
         for regr in self.regr_:
