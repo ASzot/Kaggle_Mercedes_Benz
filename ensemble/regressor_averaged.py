@@ -1,34 +1,49 @@
-from sklearn.base import BaseEstimator, TransformerMixin, RegressorMixin, clone
 import numpy as np
+from functools import reduce
+from ensemble.ensemble_regressor import EnsembleRegressor
 
-class RegressorAveraged(BaseEstimator, RegressorMixin, TransformerMixin):
-    def __init__(self, regressors):
+class RegressorAveraged(EnsembleRegressor):
+    def __init__(self, regressors, cols, pred_weights = None):
         self.regressors = regressors
-
-    def __clone_regressors(self):
-        for regressor in self.regressors:
-            try:
-                ret_obj = clone(regressor)
-            except:
-                ret_obj = regressor
-
-            yield ret_obj
+        self.pred_weights = pred_weights
+        self.use_cols = cols
+        self.all_fn_x = []
 
 
     def fit(self, X, y):
-        self.regr_ = list(self.__clone_regressors())
+        print('Fitting regressor averaged')
+        self.all_fn_x = []
+
+        def train_model_mapper(clf):
+            print('Fitting regressor')
+            model, fn_x = self.fit_model(clf, X, y, self.use_cols)
+            self.all_fn_x.append(fn_x)
+            return model
+
 
         # Train base models
-        for regr in self.regr_:
-            regr.fit(X, y)
-
+        self.regressors = map(train_model_mapper, self.regressors)
         return self
 
+
     def predict(self, X):
-        predictions = np.column_stack([
-            regr.predict(X) for regr in self.regr_
-        ])
-        return np.mean(predictions, axis=1)
+        if self.pred_weights is None:
+            print('Computing predictions to be averaged')
+            # Transform the input by the model's input transformer and make a
+            # prediction.
+            preds = list(map(lambda x: x[0].predict(x[1](X)), zip(self.regressors,
+                self.all_fn_x)))
 
+            print('Weighting predictions')
+            weighted_pred = reduce(lambda x, y: x + (y[0] * y[1]), zip(self.pred_weights, preds))
 
+            return weighted_pred
+        else:
+            print('Computing predictions to be averaged')
+            predictions = np.column_stack([
+                regr.predict(fn_x(X)) for regr, fn_x in zip(self.regressors, self.all_fn_x)
+            ])
 
+            print('Averaging predictions')
+
+            return np.mean(predictions, axis=1)
